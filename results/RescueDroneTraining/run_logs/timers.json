@@ -1,0 +1,42 @@
+{
+    "name": "root",
+    "metadata": {
+        "timer_format_version": "0.1.0",
+        "start_time_seconds": "1739964240",
+        "python_version": "3.10.0 (tags/v3.10.0:b494f59, Oct  4 2021, 19:00:18) [MSC v.1929 64 bit (AMD64)]",
+        "command_line_arguments": "C:\\Users\\nanaj\\AppData\\Local\\Programs\\Python\\Python310\\Scripts\\mlagents-learn Assets/ML-Agents/drone_config.yaml --run-id=RescueDroneTraining",
+        "mlagents_version": "0.30.0",
+        "mlagents_envs_version": "0.30.0",
+        "communication_protocol_version": "1.5.0",
+        "pytorch_version": "2.6.0+cpu",
+        "numpy_version": "1.21.2",
+        "end_time_seconds": "1739964307"
+    },
+    "total": 67.22160609999992,
+    "count": 1,
+    "self": 0.011772399999244954,
+    "children": {
+        "run_training.setup": {
+            "total": 0.09196840000004158,
+            "count": 1,
+            "self": 0.09196840000004158
+        },
+        "TrainerController.start_learning": {
+            "total": 67.11786530000063,
+            "count": 1,
+            "self": 0.00018989999807672575,
+            "children": {
+                "TrainerController._reset_env": {
+                    "total": 67.1176370000012,
+                    "count": 1,
+                    "self": 67.1176370000012
+                },
+                "TrainerController._save_models": {
+                    "total": 3.840000135824084e-05,
+                    "count": 1,
+                    "self": 3.840000135824084e-05
+                }
+            }
+        }
+    }
+}
