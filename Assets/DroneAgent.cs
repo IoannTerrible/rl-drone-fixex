@@ -1,153 +1,144 @@
-using UnityEngine;
-using Unity.MLAgents;
-using Unity.MLAgents.Sensors;
-using Unity.MLAgents.Actuators;
+using System;
 using System.Collections;
 using System.Collections.Generic;
+using Unity.MLAgents;
+using Unity.MLAgents.Actuators;
+using Unity.MLAgents.Sensors;
+using UnityEngine;
 
 public class DroneRescueAgent : Agent
 {
     [Header("External Drone Controls")]
-    public Transform droneTransform;
-    public Rigidbody droneRigidbody;
-    
+    public Transform DroneTransform;
+    public Rigidbody DroneRigidbody;
+
     [Header("Detection Settings")]
-    public float detectionRadius = 15f;
-    public float rescueRadius = 3f;
-    public float signalDuration = 5f;
-    public LayerMask survivorLayer;
-    public LayerMask obstacleLayer;
-    public float minHeightForCrash = 1.0f;
-    
+    public float DetectionRadius = 15f;
+    public float RescueRadius = 3f;
+    public float SignalDuration = 5f;
+    public LayerMask SurvivorLayer;
+    public LayerMask ObstacleLayer;
+    public float MinCrashHeight = 1.0f;
+
     [Header("Visual Effects")]
-    public GameObject detectionIndicatorPrefab;
-    public GameObject explosionPrefab;
-    public Color detectionColor = Color.yellow;
-    public Color rescueColor = Color.green;
-    
+    public GameObject DetectionIndicatorPrefab;
+    public GameObject ExplosionPrefab;
+    public Color DetectionColor = Color.yellow;
+    public Color RescueColor = Color.green;
+
     [Header("Audio")]
-    public AudioClip detectionSound;
-    public AudioClip rescueSound;
-    public AudioClip explosionSound;
-    
+    public AudioClip DetectionSound;
+    public AudioClip RescueSound;
+    public AudioClip ExplosionSound;
+
     [Header("Movement Output")]
-    public float pitchAmount = 0.2f;
-    public float rollAmount = 0.2f;
-    public float yawAmount = 0.2f;
-    public float thrustAmount = 0.2f;
-    
+    public float PitchScale = 0.2f;
+    public float RollScale = 0.2f;
+    public float YawScale = 0.2f;
+    public float ThrustScale = 0.2f;
+
     [Header("Reward Settings")]
-    public float rescuedSurvivorReward = 1.0f;
-    public float locatedSurvivorReward = 0.3f;
-    public float crashPenalty = -1.0f;
-    public float timeStepPenalty = -0.001f;
-    public float approachingReward = 0.01f;
-    
-    // Internal state variables
-    private bool isSignaling = false;
-    private float signalTimer = 0f;
-    private Transform currentTarget;
-    private AudioSource audioSource;
-    private GameManagerExtension gameManager;
-    private Vector3 previousPosition;
-    private List<Transform> detectedSurvivors = new List<Transform>();
-    private bool hasExploded = false;
-    private Vector3 inputControls = Vector3.zero;
-    private float yawControl = 0f;
-    private bool isInitialized = false;
-    
+    public float RescuedSurvivorReward = 1.0f;
+    public float LocatedSurvivorReward = 0.3f;
+    public float CrashPenalty = -1.0f;
+    public float TimeStepPenalty = -0.001f;
+    public float ApproachingReward = 0.01f;
+
+    private bool _isSignaling = false;
+    private float _signalTimer = 0f;
+    private Transform _currentTarget;
+    private AudioSource _audioSource;
+    private GameManagerExtension _gameManager;
+    private Vector3 _previousPosition;
+    private List<Transform> _detectedSurvivors = new List<Transform>();
+    private bool _hasExploded = false;
+    private Vector3 _inputControls = Vector3.zero;
+    private float _yawControl = 0f;
+    private bool _isInitialized = false;
+
     public override void Initialize()
     {
-        if (droneTransform == null)
+        if (DroneTransform == null)
         {
-            droneTransform = transform;
+            DroneTransform = transform;
             Debug.LogWarning("DroneTransform not assigned, using self transform");
         }
-        
-        if (droneRigidbody == null)
+
+        if (DroneRigidbody == null)
         {
-            droneRigidbody = GetComponent<Rigidbody>();
-            if (droneRigidbody == null)
+            DroneRigidbody = GetComponent<Rigidbody>();
+            if (DroneRigidbody == null)
             {
-                droneRigidbody = droneTransform.GetComponent<Rigidbody>();
-                if (droneRigidbody == null)
+                DroneRigidbody = DroneTransform.GetComponent<Rigidbody>();
+                if (DroneRigidbody == null)
                 {
                     Debug.LogError("No Rigidbody found on drone. Adding one.");
-                    droneRigidbody = droneTransform.gameObject.AddComponent<Rigidbody>();
+                    DroneRigidbody = DroneTransform.gameObject.AddComponent<Rigidbody>();
                 }
             }
         }
-        
-        // Get required components
-        audioSource = GetComponent<AudioSource>();
-        if (audioSource == null)
+
+        _audioSource = GetComponent<AudioSource>();
+        if (_audioSource == null)
         {
-            audioSource = gameObject.AddComponent<AudioSource>();
+            _audioSource = gameObject.AddComponent<AudioSource>();
         }
-        
-        // Find or create GameManagerExtension
-        gameManager = FindObjectOfType<GameManagerExtension>();
-        if (gameManager == null)
+
+        _gameManager = FindObjectOfType<GameManagerExtension>();
+        if (_gameManager == null)
         {
-            // Create basic GameManager if not found
             GameObject gmObject = new GameObject("GameManager");
             gmObject.AddComponent<GameManager>();
-            gameManager = gmObject.AddComponent<GameManagerExtension>();
+            _gameManager = gmObject.AddComponent<GameManagerExtension>();
             Debug.LogWarning("Created GameManager and GameManagerExtension as none were found");
         }
-        
-        // Ensure required tags exist
-        CreateRequiredTags();
-        
-        // Ensure spawn point exists
+
+        ValidateRequiredTags();
         EnsureSpawnPointExists();
-        
-        // Ensure SafeZone exists
         EnsureSafeZoneExists();
-        
-        // Start detection routine
-        StartCoroutine(SurvivorDetectionRoutine());
-        
-        isInitialized = true;
+        StartCoroutine(DetectSurvivorsRoutine());
+
+        _isInitialized = true;
         Debug.Log("DroneRescueAgent initialized successfully");
     }
-    
-    private void CreateRequiredTags()
+
+    private void ValidateRequiredTags()
     {
-        // This is just a message - Unity doesn't allow runtime tag creation
         bool hasDroneSpawnTag = false;
         bool hasSafeZoneTag = false;
         bool hasSurvivorTag = false;
-        
-        GameObject testObj = new GameObject();
-        try {
+
+        GameObject testObj = new();
+        try
+        {
             testObj.tag = "DroneSpawn";
             hasDroneSpawnTag = true;
-        } catch { }
-        
-        try {
+
             testObj.tag = "SafeZone";
             hasSafeZoneTag = true;
-        } catch { }
-        
-        try {
+
             testObj.tag = "Survivor";
             hasSurvivorTag = true;
-        } catch { }
-        
+        }
+        catch(Exception ex) { }
+
         Destroy(testObj);
-        
+
         string missingTags = "";
         if (!hasDroneSpawnTag) missingTags += "DroneSpawn ";
-        if (!hasSafeZoneTag) missingTags += "SafeZone ";
+        if (!hasSafeZoneTag)  missingTags += "SafeZone ";
         if (!hasSurvivorTag) missingTags += "Survivor ";
-        
+
         if (missingTags != "")
         {
-            Debug.LogError("Missing required tags: " + missingTags + ". Please add these tags in Edit > Project Settings > Tags and Layers");
+            Debug.LogError(
+                "Missing required tags: "
+                    + missingTags
+                    + ". Please add these tags in Edit > Project Settings > Tags and Layers"
+            );
         }
     }
-    
+
     private void EnsureSpawnPointExists()
     {
         GameObject spawnPoint = GameObject.FindGameObjectWithTag("DroneSpawn");
@@ -159,7 +150,7 @@ public class DroneRescueAgent : Agent
             Debug.LogWarning("Created default DroneSpawn at (0,10,0) as none was found");
         }
     }
-    
+
     private void EnsureSafeZoneExists()
     {
         GameObject safeZone = GameObject.FindGameObjectWithTag("SafeZone");
@@ -170,14 +161,10 @@ public class DroneRescueAgent : Agent
             safeZone.tag = "SafeZone";
             safeZone.transform.position = new Vector3(0, 0.1f, 0);
             safeZone.transform.localScale = new Vector3(10, 0.1f, 10);
-            
-            // Add SafeZone script if it exists in project
             if (System.Type.GetType("SafeZone") != null)
             {
                 safeZone.AddComponent(System.Type.GetType("SafeZone"));
             }
-            
-            // Create basic material
             Renderer renderer = safeZone.GetComponent<Renderer>();
             if (renderer != null)
             {
@@ -185,125 +172,107 @@ public class DroneRescueAgent : Agent
                 mat.color = new Color(0, 1, 0, 0.3f);
                 renderer.material = mat;
             }
-            
             Debug.LogWarning("Created default SafeZone at origin as none was found");
         }
     }
-    
+    /// <summary>You can write comments like this.</summary>
     public override void OnEpisodeBegin()
     {
         Debug.Log("Starting new episode");
-        
-        // Reset drone state
-        hasExploded = false;
-        isSignaling = false;
-        signalTimer = 0f;
-        inputControls = Vector3.zero;
-        yawControl = 0f;
-        detectedSurvivors.Clear();
-        
-        // Reset drone position if spawn point is available
+        _hasExploded = false;
+        _isSignaling = false;
+        _signalTimer = 0f;
+        _inputControls = Vector3.zero;
+        _yawControl = 0f;
+        _detectedSurvivors.Clear();
+
         Transform spawnPoint = GameObject.FindGameObjectWithTag("DroneSpawn")?.transform;
         if (spawnPoint != null)
         {
-            if (droneTransform != null)
+            if (DroneTransform != null)
             {
-                droneTransform.position = spawnPoint.position;
-                droneTransform.rotation = spawnPoint.rotation;
+                //You can do this.
+                DroneTransform.SetPositionAndRotation(spawnPoint.position, spawnPoint.rotation);
             }
             else
             {
-                Debug.LogError("droneTransform is null in OnEpisodeBegin");
+                Debug.LogError("DroneTransform is null in OnEpisodeBegin");
             }
-            
-            if (droneRigidbody != null)
+
+            if (DroneRigidbody != null)
             {
-                droneRigidbody.velocity = Vector3.zero;
-                droneRigidbody.angularVelocity = Vector3.zero;
+                DroneRigidbody.velocity = Vector3.zero;
+                DroneRigidbody.angularVelocity = Vector3.zero;
             }
             else
             {
-                Debug.LogError("droneRigidbody is null in OnEpisodeBegin");
+                Debug.LogError("DroneRigidbody is null in OnEpisodeBegin");
             }
         }
         else
         {
             Debug.LogError("No GameObject with DroneSpawn tag found");
         }
-        
-        // Find initial target
+
         UpdateCurrentTarget();
-        
-        // Store position for reward calculation
-        previousPosition = droneTransform != null ? droneTransform.position : transform.position;
+        _previousPosition = DroneTransform != null ? DroneTransform.position : transform.position;
     }
-    
+
     public override void CollectObservations(VectorSensor sensor)
     {
-        if (droneTransform == null)
+        if (DroneTransform == null)
         {
-            // Emergency fallbacks if droneTransform is null
             sensor.AddObservation(transform.localPosition);
             sensor.AddObservation(transform.forward);
-            sensor.AddObservation(Vector3.zero); // No velocity data
-            Debug.LogError("droneTransform is null in CollectObservations");
+            sensor.AddObservation(Vector3.zero);
+            Debug.LogError("DroneTransform is null in CollectObservations");
         }
         else
         {
-            // Drone position and rotation (6 values)
-            sensor.AddObservation(droneTransform.localPosition);
-            sensor.AddObservation(droneTransform.forward);
-            
-            // Drone velocity (3 values)
-            if (droneRigidbody != null)
+            sensor.AddObservation(DroneTransform.localPosition);
+            sensor.AddObservation(DroneTransform.forward);
+            if (DroneRigidbody != null)
             {
-                sensor.AddObservation(droneRigidbody.velocity);
+                sensor.AddObservation(DroneRigidbody.velocity);
             }
             else
             {
                 sensor.AddObservation(Vector3.zero);
             }
         }
-        
-        // Current target information (4 values)
-        if (currentTarget != null)
+
+        if (_currentTarget != null)
         {
-            Vector3 observationPos = droneTransform != null ? droneTransform.position : transform.position;
-            
-            // Direction to target in local space
-            Vector3 localDirection = (droneTransform != null ? 
-                droneTransform.InverseTransformPoint(currentTarget.position) : 
-                transform.InverseTransformPoint(currentTarget.position)).normalized;
-                
+            Vector3 observationPos =
+                DroneTransform != null ? DroneTransform.position : transform.position;
+            Vector3 localDirection = (
+                DroneTransform != null
+                    ? DroneTransform.InverseTransformPoint(_currentTarget.position)
+                    : transform.InverseTransformPoint(_currentTarget.position)
+            ).normalized;
             sensor.AddObservation(localDirection);
-            
-            // Distance to target (normalized)
-            float distance = Vector3.Distance(observationPos, currentTarget.position);
-            sensor.AddObservation(distance / detectionRadius);
+            float distance = Vector3.Distance(observationPos, _currentTarget.position);
+            sensor.AddObservation(distance / DetectionRadius);
         }
         else
         {
-            // No target
-            sensor.AddObservation(Vector3.zero); // Direction
-            sensor.AddObservation(1.0f);         // Max distance
+            sensor.AddObservation(Vector3.zero);
+            sensor.AddObservation(1.0f);
         }
-        
-        // Signaling state (1 value)
-        sensor.AddObservation(isSignaling ? 1.0f : 0.0f);
-        
-        // Obstacle detection (8 values)
-        Vector3 raycastOrigin = droneTransform != null ? droneTransform.position : transform.position;
-        Vector3 forwardDir = droneTransform != null ? droneTransform.forward : transform.forward;
-        
+
+        sensor.AddObservation(_isSignaling ? 1.0f : 0.0f);
+
+        Vector3 rayOrigin = DroneTransform != null ? DroneTransform.position : transform.position;
+        Vector3 forwardDir = DroneTransform != null ? DroneTransform.forward : transform.forward;
+
         for (int i = 0; i < 8; i++)
         {
             float angle = i * 45f;
             Vector3 direction = Quaternion.Euler(0, angle, 0) * forwardDir;
-            
             RaycastHit hit;
-            if (Physics.Raycast(raycastOrigin, direction, out hit, detectionRadius, obstacleLayer))
+            if (Physics.Raycast(rayOrigin, direction, out hit, DetectionRadius, ObstacleLayer))
             {
-                sensor.AddObservation(hit.distance / detectionRadius);
+                sensor.AddObservation(hit.distance / DetectionRadius);
             }
             else
             {
@@ -311,409 +280,373 @@ public class DroneRescueAgent : Agent
             }
         }
     }
-    
+
     public override void OnActionReceived(ActionBuffers actionBuffers)
     {
-        if (hasExploded)
+        if (_hasExploded)
             return;
-            
-        if (!isInitialized)
+
+        if (!_isInitialized)
         {
             Debug.LogWarning("DroneRescueAgent not fully initialized but receiving actions");
             return;
         }
-            
-        // Extract actions
-        float pitch = actionBuffers.ContinuousActions[0];   // Forward/backward
-        float roll = actionBuffers.ContinuousActions[1];    // Left/right
-        float thrust = actionBuffers.ContinuousActions[2];  // Up/down
-        float yaw = actionBuffers.ContinuousActions[3];     // Rotation
-        
-        // Store input controls for your drone asset to use
-        inputControls = new Vector3(pitch * pitchAmount, thrust * thrustAmount, roll * rollAmount);
-        yawControl = yaw * yawAmount;
-        
-        // Apply small time penalty to encourage efficiency
-        AddReward(timeStepPenalty);
-        
-        // Update signal timer
-        if (isSignaling)
+
+        float pitch = actionBuffers.ContinuousActions[0];
+        float roll = actionBuffers.ContinuousActions[1];
+        float thrust = actionBuffers.ContinuousActions[2];
+        float yaw = actionBuffers.ContinuousActions[3];
+
+        _inputControls = new Vector3(pitch * PitchScale, thrust * ThrustScale, roll * RollScale);
+        _yawControl = yaw * YawScale;
+
+        AddReward(TimeStepPenalty);
+
+        if (_isSignaling)
         {
-            signalTimer -= Time.deltaTime;
-            if (signalTimer <= 0)
+            _signalTimer -= Time.deltaTime;
+            if (_signalTimer <= 0)
             {
-                isSignaling = false;
+                _isSignaling = false;
             }
         }
-        
-        // Check proximity to current target
-        if (currentTarget != null)
+
+        if (_currentTarget != null)
         {
-            Vector3 currentPos = droneTransform != null ? droneTransform.position : transform.position;
-            float distance = Vector3.Distance(currentPos, currentTarget.position);
-            
-            // Reward for getting closer to target
-            float previousDistance = Vector3.Distance(previousPosition, currentTarget.position);
+            Vector3 currentPos =
+                DroneTransform != null ? DroneTransform.position : transform.position;
+            float distance = Vector3.Distance(currentPos, _currentTarget.position);
+            float previousDistance = Vector3.Distance(_previousPosition, _currentTarget.position);
             if (previousDistance > distance)
             {
-                AddReward(approachingReward);
+                AddReward(ApproachingReward);
             }
-            
-            // Check if close enough for detection/rescue
-            if (distance <= rescueRadius && detectedSurvivors.Contains(currentTarget))
+
+            if (distance <= RescueRadius && _detectedSurvivors.Contains(_currentTarget))
             {
-                if (!isSignaling)
+                if (!_isSignaling)
                 {
-                    // Start rescue signal
-                    isSignaling = true;
-                    signalTimer = signalDuration;
-                    
-                    // Play rescue sound
-                    if (audioSource != null && rescueSound != null)
+                    _isSignaling = true;
+                    _signalTimer = SignalDuration;
+                    if (_audioSource != null && RescueSound != null)
                     {
-                        audioSource.PlayOneShot(rescueSound);
+                        _audioSource.PlayOneShot(RescueSound);
                     }
-                    
-                    // Create visual indicator
-                    CreateIndicator(currentTarget, rescueColor);
+                    CreateIndicator(_currentTarget, RescueColor);
                 }
-                else if (signalTimer <= 0.5f)
+                else if (_signalTimer <= 0.5f)
                 {
-                    // Rescue complete
-                    RescueSurvivor(currentTarget);
+                    RescueSurvivor(_currentTarget);
                     UpdateCurrentTarget();
                 }
             }
         }
-        
-        // Store current position for next frame
-        previousPosition = droneTransform != null ? droneTransform.position : transform.position;
-        
-        // Check for collisions with terrain
+
+        _previousPosition = DroneTransform != null ? DroneTransform.position : transform.position;
         CheckForCollision();
     }
-    
+
     void CheckForCollision()
     {
-        if (droneTransform == null) return;
-        
-        // Center raycast for terrain detection
+        if (DroneTransform == null)
+            return;
+
         RaycastHit hit;
-        if (Physics.Raycast(droneTransform.position, Vector3.down, out hit, minHeightForCrash, obstacleLayer))
+        if (
+            Physics.Raycast(
+                DroneTransform.position,
+                Vector3.down,
+                out hit,
+                MinCrashHeight,
+                ObstacleLayer
+            )
+        )
         {
             Debug.Log("Drone hit terrain via downward raycast: " + hit.collider.name);
             TriggerExplosion();
             return;
         }
-        
-        // Multiple raycasts for better detection
+
         Vector3[] checkPoints = new Vector3[]
         {
-            droneTransform.position + droneTransform.right * 0.5f,
-            droneTransform.position - droneTransform.right * 0.5f,
-            droneTransform.position + droneTransform.forward * 0.5f,
-            droneTransform.position - droneTransform.forward * 0.5f
+            DroneTransform.position + DroneTransform.right * 0.5f,
+            DroneTransform.position - DroneTransform.right * 0.5f,
+            DroneTransform.position + DroneTransform.forward * 0.5f,
+            DroneTransform.position - DroneTransform.forward * 0.5f
         };
-        
+
         foreach (Vector3 point in checkPoints)
         {
-            if (Physics.Raycast(point, Vector3.down, out hit, minHeightForCrash, obstacleLayer))
+            if (Physics.Raycast(point, Vector3.down, out hit, MinCrashHeight, ObstacleLayer))
             {
                 Debug.Log("Drone hit terrain via side raycast: " + hit.collider.name);
                 TriggerExplosion();
                 return;
             }
         }
-        
-        // Check for high velocity impact
-        if (droneRigidbody != null && droneRigidbody.velocity.magnitude > 10)
+
+        if (DroneRigidbody != null && DroneRigidbody.velocity.magnitude > 10)
         {
-            Debug.Log("Drone crashed due to high velocity: " + droneRigidbody.velocity.magnitude);
+            Debug.Log("Drone crashed due to high velocity: " + DroneRigidbody.velocity.magnitude);
             TriggerExplosion();
             return;
         }
     }
-    
+
     void OnCollisionEnter(Collision collision)
     {
-        // Check if collision is with terrain
-        if (((1 << collision.gameObject.layer) & obstacleLayer) != 0)
+        if (((1 << collision.gameObject.layer) & ObstacleLayer) != 0)
         {
             Debug.Log("Drone collided with: " + collision.gameObject.name);
             TriggerExplosion();
         }
     }
-    
-    private void RescueSurvivor(Transform survivor)
+
+    void RescueSurvivor(Transform survivor)
     {
-        // Add reward
-        AddReward(rescuedSurvivorReward);
-        
-        // Notify game manager
-        if (gameManager != null)
+        AddReward(RescuedSurvivorReward);
+        if (_gameManager != null)
         {
-            gameManager.SurvivorRescued(survivor);
+            _gameManager.SurvivorRescued(survivor);
         }
-        
-        // Remove from detected list
-        detectedSurvivors.Remove(survivor);
-        
+        _detectedSurvivors.Remove(survivor);
         Debug.Log("Survivor rescued at " + survivor.position);
     }
-    
-    IEnumerator SurvivorDetectionRoutine()
+
+    IEnumerator DetectSurvivorsRoutine()
     {
         while (true)
         {
-            if (droneTransform == null)
+            if (DroneTransform == null)
             {
                 yield return new WaitForSeconds(0.5f);
                 continue;
             }
-            
-            // Don't scan if signaling or exploded
-            if (!isSignaling && !hasExploded)
+
+            if (!_isSignaling && !_hasExploded)
             {
-                // Scan for survivors
-                Collider[] hitColliders = Physics.OverlapSphere(droneTransform.position, detectionRadius, survivorLayer);
-                
+                Collider[] hitColliders = Physics.OverlapSphere(
+                    DroneTransform.position,
+                    DetectionRadius,
+                    SurvivorLayer
+                );
                 foreach (var hitCollider in hitColliders)
                 {
-                    if (hitCollider == null) continue;
-                    
+                    if (hitCollider == null)
+                        continue;
+
                     Transform survivor = hitCollider.transform;
-                    
-                    // Check if survivor is already detected
-                    if (!detectedSurvivors.Contains(survivor))
+                    if (!_detectedSurvivors.Contains(survivor))
                     {
-                        // Check line of sight
                         if (HasLineOfSightTo(survivor))
                         {
-                            // Survivor found!
                             LocateSurvivor(survivor);
                         }
                     }
                 }
             }
-            
-            // Wait before next scan
+
             yield return new WaitForSeconds(0.5f);
         }
     }
-    
+
     bool HasLineOfSightTo(Transform target)
     {
-        if (droneTransform == null || target == null) return false;
-        
-        RaycastHit hit;
-        Vector3 direction = target.position - droneTransform.position;
-        
-        if (Physics.Raycast(droneTransform.position, direction.normalized, out hit, detectionRadius))
+        if (DroneTransform == null || target == null)
+            return false;
+
+        Vector3 direction = target.position - DroneTransform.position;
+        if (
+            Physics.Raycast(
+                DroneTransform.position,
+                direction.normalized,
+                out RaycastHit hit,
+                DetectionRadius
+            )
+        )
         {
-            // Check if direct hit to survivor
             if (hit.transform == target)
             {
                 return true;
             }
         }
-        
         return false;
     }
-    
+
     void LocateSurvivor(Transform survivor)
     {
-        // Add to detected list
-        detectedSurvivors.Add(survivor);
-        
-        // Notify game manager
-        if (gameManager != null)
+        _detectedSurvivors.Add(survivor);
+        if (_gameManager != null)
         {
-            gameManager.SurvivorLocated(survivor);
+            _gameManager.SurvivorLocated(survivor);
         }
-        
-        // Add reward
-        AddReward(locatedSurvivorReward);
-        
-        // Play detection sound
-        if (audioSource != null && detectionSound != null)
+        AddReward(LocatedSurvivorReward);
+        if (_audioSource != null && DetectionSound != null)
         {
-            audioSource.PlayOneShot(detectionSound);
+            _audioSource.PlayOneShot(DetectionSound);
         }
-        
-        // Create visual indicator
-        CreateIndicator(survivor, detectionColor);
-        
+        //Check position there.
+        CreateIndicator(survivor, DetectionColor);
         Debug.Log("Survivor located at " + survivor.position);
-        
-        // If no current target, set this as target
-        if (currentTarget == null)
+        if (_currentTarget == null)
         {
-            currentTarget = survivor;
+            _currentTarget = survivor;
         }
     }
-    
+
     void CreateIndicator(Transform target, Color color)
     {
-        if (detectionIndicatorPrefab != null && target != null)
+        if (DetectionIndicatorPrefab != null && target != null)
         {
-            GameObject indicator = Instantiate(detectionIndicatorPrefab, target.position, Quaternion.identity);
-            
-            // Set color
+            GameObject indicator = Instantiate(
+                DetectionIndicatorPrefab,
+                target.position,
+                Quaternion.identity
+            );
             Renderer renderer = indicator.GetComponent<Renderer>();
             if (renderer != null)
             {
                 renderer.material.color = color;
             }
-            
-            // Make temporary
             Destroy(indicator, 5f);
         }
     }
-    
+
     void UpdateCurrentTarget()
     {
-        if (gameManager == null) return;
-        
-        // First check for located survivors to rescue
-        List<Transform> locatedSurvivors = gameManager.GetLocatedSurvivors();
+        if (_gameManager == null)
+            return;
+
+        List<Transform> locatedSurvivors = _gameManager.GetLocatedSurvivors();
         if (locatedSurvivors != null && locatedSurvivors.Count > 0)
         {
-            // Find closest located survivor
-            currentTarget = FindClosestTransform(locatedSurvivors);
-            Debug.Log("Target updated to located survivor: " + (currentTarget != null ? currentTarget.name : "null"));
+            _currentTarget = FindClosestTransform(locatedSurvivors);
+            Debug.Log(
+                "Target updated to located survivor: "
+                    + (_currentTarget != null ? _currentTarget.name : "null")
+            );
         }
         else
         {
-            // Look for remaining survivors
-            List<Transform> remainingSurvivors = gameManager.GetRemainingSurvivors();
+            List<Transform> remainingSurvivors = _gameManager.GetRemainingSurvivors();
             if (remainingSurvivors != null && remainingSurvivors.Count > 0)
             {
-                currentTarget = FindClosestTransform(remainingSurvivors);
-                Debug.Log("Target updated to remaining survivor: " + (currentTarget != null ? currentTarget.name : "null"));
+                _currentTarget = FindClosestTransform(remainingSurvivors);
+                Debug.Log(
+                    "Target updated to remaining survivor: "
+                        + (_currentTarget != null ? _currentTarget.name : "null")
+                );
             }
             else
             {
-                // All survivors rescued, go to safe zone
-                currentTarget = GameObject.FindGameObjectWithTag("SafeZone")?.transform;
-                Debug.Log("Target updated to safe zone: " + (currentTarget != null ? currentTarget.name : "null"));
+                _currentTarget = GameObject.FindGameObjectWithTag("SafeZone")?.transform;
+                Debug.Log(
+                    "Target updated to safe zone: "
+                        + (_currentTarget != null ? _currentTarget.name : "null")
+                );
             }
         }
     }
-    
+
     Transform FindClosestTransform(List<Transform> transforms)
     {
-        if (transforms == null || transforms.Count == 0 || droneTransform == null)
+        if (transforms == null || transforms.Count == 0 || DroneTransform == null)
             return null;
-            
+
         Transform closest = null;
         float minDistance = float.MaxValue;
-        
+
         foreach (Transform t in transforms)
         {
-            if (t == null) continue;
-            
-            float distance = Vector3.Distance(droneTransform.position, t.position);
+            if (t == null)
+                continue;
+
+            float distance = Vector3.Distance(DroneTransform.position, t.position);
             if (distance < minDistance)
             {
                 minDistance = distance;
                 closest = t;
             }
         }
-        
+
         return closest;
     }
-    
+
     void TriggerExplosion()
     {
-        if (hasExploded)
+        if (_hasExploded)
             return;
-            
-        hasExploded = true;
-        
-        // Visual effect
-        if (explosionPrefab != null && droneTransform != null)
+
+        _hasExploded = true;
+
+        if (ExplosionPrefab != null && DroneTransform != null)
         {
-            Instantiate(explosionPrefab, droneTransform.position, Quaternion.identity);
+            Instantiate(ExplosionPrefab, DroneTransform.position, Quaternion.identity);
         }
-        
-        // Sound effect
-        if (audioSource != null && explosionSound != null)
+
+        if (_audioSource != null && ExplosionSound != null)
         {
-            audioSource.PlayOneShot(explosionSound);
+            _audioSource.PlayOneShot(ExplosionSound);
         }
-        
-        // Add negative reward
-        AddReward(crashPenalty);
-        
+
+        AddReward(CrashPenalty);
         Debug.Log("Drone crashed and exploded!");
-        
-        // End episode with slight delay to allow explosion effects
         StartCoroutine(DelayedEndEpisode());
     }
-    
+
     IEnumerator DelayedEndEpisode()
     {
-        // Wait a moment to see the explosion
         yield return new WaitForSeconds(0.5f);
         EndEpisode();
     }
-    
+
     public override void Heuristic(in ActionBuffers actionsOut)
     {
-        // Manual control for testing
         var continuousActionsOut = actionsOut.ContinuousActions;
-        
-        continuousActionsOut[0] = Input.GetAxis("Vertical");     // Pitch (forward/backward)
-        continuousActionsOut[1] = Input.GetAxis("Horizontal");   // Roll (left/right)
-        continuousActionsOut[2] = (Input.GetKey(KeyCode.Space) ? 1.0f : 0.0f) - 
-                                 (Input.GetKey(KeyCode.LeftShift) ? 1.0f : 0.0f);  // Thrust (up/down)
-        continuousActionsOut[3] = (Input.GetKey(KeyCode.E) ? 1.0f : 0.0f) - 
-                                 (Input.GetKey(KeyCode.Q) ? 1.0f : 0.0f);  // Yaw rotation
+        continuousActionsOut[0] = Input.GetAxis("Vertical");
+        continuousActionsOut[1] = Input.GetAxis("Horizontal");
+        continuousActionsOut[2] =
+            (Input.GetKey(KeyCode.Space) ? 1.0f : 0.0f)
+            - (Input.GetKey(KeyCode.LeftShift) ? 1.0f : 0.0f);
+        continuousActionsOut[3] =
+            (Input.GetKey(KeyCode.E) ? 1.0f : 0.0f) - (Input.GetKey(KeyCode.Q) ? 1.0f : 0.0f);
     }
-    
-    // Provide access to the agent's movement decisions for your drone asset to use
+
     public Vector3 GetMovementControls()
     {
-        return inputControls;
+        return _inputControls;
     }
-    
+
     public float GetYawControl()
     {
-        return yawControl;
+        return _yawControl;
     }
-    
+
     public bool IsSignaling()
     {
-        return isSignaling;
+        return _isSignaling;
     }
-    
+
     public Transform GetCurrentTarget()
     {
-        return currentTarget;
+        return _currentTarget;
     }
-    
+
     void OnDrawGizmosSelected()
     {
-        // Only draw if we have a valid transform reference
-        Vector3 position = droneTransform != null ? droneTransform.position : transform.position;
-        
-        // Draw detection radius
+        Vector3 position = DroneTransform != null ? DroneTransform.position : transform.position;
         Gizmos.color = new Color(1, 1, 0, 0.3f);
-        Gizmos.DrawWireSphere(position, detectionRadius);
-        
-        // Draw rescue radius
+        Gizmos.DrawWireSphere(position, DetectionRadius);
         Gizmos.color = new Color(0, 1, 0, 0.3f);
-        Gizmos.DrawWireSphere(position, rescueRadius);
-        
-        // Draw line to current target
-        if (currentTarget != null)
+        Gizmos.DrawWireSphere(position, RescueRadius);
+
+        if (_currentTarget != null)
         {
             Gizmos.color = Color.white;
-            Gizmos.DrawLine(position, currentTarget.position);
+            Gizmos.DrawLine(position, _currentTarget.position);
         }
-        
-        // Draw minimum height for crash
+
         Gizmos.color = Color.red;
-        Gizmos.DrawLine(position, position + Vector3.down * minHeightForCrash);
+        Gizmos.DrawLine(position, position + Vector3.down * MinCrashHeight);
     }
 }
